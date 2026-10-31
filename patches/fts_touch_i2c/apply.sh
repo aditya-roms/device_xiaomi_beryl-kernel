@@ -34,9 +34,9 @@ patch_file() {
 
     cp -n "$target" "${target}.orig"
 
-    # P1 (reverted): 0x0000cfc8: b.ne 0x800cfe4 (e1000054)
-    # Restored proximity suspend early return to keep proximity mode active during calls.
-    printf '\xe1\x00\x00\x54' | dd of="$target" bs=1 seek=$((0xcfc8)) count=4 conv=notrunc status=none
+    # P1: 0x0000cfc8: b.ne 0x800cfe4 (e1000054) -> b 0x800cfe4 (07000014)
+    # Bypasses proximity suspend early return, ensuring gesture mode initialization.
+    printf '\x07\x00\x00\x14' | dd of="$target" bs=1 seek=$((0xcfc8)) count=4 conv=notrunc status=none
 
     # P2: 0x0000d008: tbnz w8, 0, 0x800d014 (68000037) -> b 0x800d014 (03000014)
     # Forces gesture_support=1 on suspend, preventing deep sleep poweroff.
@@ -50,15 +50,20 @@ patch_file() {
     # Prevents dropping suspended touch-down when fod_status is 0.
     printf '\x1f\x20\x03\xd5' | dd of="$target" bs=1 seek=$((0xc58c)) count=4 conv=notrunc status=none
 
+    # P5: 0x0000bc38: b.ne 0x8003c58 (01010054) -> b 0x8003c58 (08000014)
+    # Prevents dropping gesture IRQs during sleep when virtual_ps is active.
+    printf '\x08\x00\x00\x14' | dd of="$target" bs=1 seek=$((0xbc38)) count=4 conv=notrunc status=none
+
     # Verify patched offsets
-    local p1 p2 p3 p4
+    local p1 p2 p3 p4 p5
     p1="$(xxd -p -s $((0xcfc8)) -l 4 "$target")"
     p2="$(xxd -p -s $((0xd008)) -l 4 "$target")"
     p3="$(xxd -p -s $((0xd02c)) -l 4 "$target")"
     p4="$(xxd -p -s $((0xc58c)) -l 4 "$target")"
+    p5="$(xxd -p -s $((0xbc38)) -l 4 "$target")"
 
-    if [[ "$p1" != "e1000054" || "$p2" != "03000014" || "$p3" != "08000014" || "$p4" != "1f2003d5" ]]; then
-        echo "Verification failed for $target: p1=$p1 p2=$p2 p3=$p3 p4=$p4" >&2
+    if [[ "$p1" != "07000014" || "$p2" != "03000014" || "$p3" != "08000014" || "$p4" != "1f2003d5" || "$p5" != "08000014" ]]; then
+        echo "Verification failed for $target: p1=$p1 p2=$p2 p3=$p3 p4=$p4 p5=$p5" >&2
         cp -f "${target}.orig" "$target"
         return 1
     fi
